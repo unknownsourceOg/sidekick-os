@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Runs once per session until the model is installed. Explains where you are, then
+# offers to fetch the local coding model. Skippable - the desktop works without it.
+set -uo pipefail
+MARK="$HOME/.sidekick/.firstrun-done"
+[ -f "$MARK" ] && exit 0
+mkdir -p "$HOME/.sidekick" "$HOME/Shared"
+g() { printf '\033[38;5;48m%s\033[0m\n' "$1"; }
+c() { printf '\033[38;5;51m%s\033[0m\n' "$1"; }
+
+clear
+cat <<'ART'
+  ___ _____ ___  ___ _  _____ ___ _  _
+ / __|_   _|   \| __| |/ / __| __| |/ /
+ \__ \ | | | |) | _|| ' <| _|| _|| ' <
+ |___/ |_| |___/|___|_|\_\___|___|_|\_\  os
+ART
+g "You are running from the USB stick. Nothing on your Mac has been touched."
+echo
+c "  the orb on the right edge is your companion - click it to chat, drag to move, right-click for menu"
+c "  in any terminal:  sk \"how do I ...\"        highlight text anywhere -> right-click orb -> explain"
+c "  keep your work:   sudo sidekick-persist      install to disk: the Install icon on the desktop"
+c "  share with mac:   put files in ~/Shared, then on the Mac: Finder > Go > Connect to Server"
+echo
+ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -n "${ip:-}" ] && c "                    smb://$ip/sidekick     (user: hacker)"
+echo
+if [ ! -f "$HOME/.sidekick/model.env" ]; then
+  ram=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)
+  g "The coding brain is not downloaded yet. This machine has ${ram} GB RAM, so I would fetch"
+  case 1 in
+    *) if   [ "$ram" -ge 30 ]; then echo "   Qwen2.5-Coder 14B  (~9 GB download)"
+       elif [ "$ram" -ge 15 ]; then echo "   Qwen2.5-Coder 7B   (~4.7 GB download)"
+       elif [ "$ram" -ge 7 ];  then echo "   Qwen2.5-Coder 3B   (~2 GB download)"
+       else                          echo "   Qwen2.5-Coder 1.5B (~1 GB download)"; fi ;;
+  esac
+  echo "   It is free, it runs entirely on this machine, and after this download you never need"
+  echo "   internet for it again. Set up persistence FIRST if you want to keep it (sudo sidekick-persist)."
+  echo
+  read -r -p "download the model now? [y/N] " a
+  if [ "${a,,}" = "y" ]; then
+    bash /opt/sidekick/setup-ai.sh
+    g "model installed - the orb and 'sk' are live now"
+  else
+    echo "skipped. run this any time:  bash /opt/sidekick/setup-ai.sh"
+  fi
+fi
+touch "$MARK"
+echo
+read -r -p "press enter to close "

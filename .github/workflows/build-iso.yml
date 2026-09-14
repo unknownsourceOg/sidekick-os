@@ -1,0 +1,75 @@
+name: build sidekick os iso
+
+# Builds the bootable ISO on GitHub's free runners (x86_64 and arm64) and
+# publishes both to a Release you can download straight onto a USB stick.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  iso:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04       # Intel Mac, any PC
+          - arch: arm64
+            runner: ubuntu-24.04-arm   # Apple Silicon Mac inside UTM
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free up disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: install live-build
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y live-build debian-archive-keyring xorriso squashfs-tools
+
+      - name: build
+        run: |
+          chmod +x iso/build-iso.sh iso/sidekick-persist iso/sidekick-firstrun
+          sudo ARCH=${{ matrix.arch }} WORK=/mnt/skos-work iso/build-iso.sh
+
+      - name: check size (release assets cap at 2 GB)
+        run: |
+          sz=$(stat -c%s sidekick-os-${{ matrix.arch }}.iso)
+          echo "iso is $((sz/1024/1024)) MB"
+          [ "$sz" -lt 2100000000 ] || { echo "::error::ISO over 2 GB - trim the package list"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidekick-os-${{ matrix.arch }}
+          path: |
+            sidekick-os-${{ matrix.arch }}.iso
+            sidekick-os-${{ matrix.arch }}.iso.sha256
+          retention-days: 14
+          compression-level: 0
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-$(date -u +%Y%m%d-%H%M)-${{ matrix.arch }}"
+          gh release create "$tag" \
+            --title "Sidekick OS (${{ matrix.arch }})" \
+            --notes "Live bootable Sidekick OS.
+
+          **amd64** = Intel Mac / any PC (hold Option at boot, pick EFI Boot).
+          **arm64** = Apple Silicon Mac, run it in UTM (free).
+
+          Flash with balenaEtcher, boot it, then:
+          - \`sudo sidekick-persist\` keeps everything on the stick forever
+          - the Install icon puts it on a real disk
+          - first run offers the free local coding model (Qwen2.5-Coder, sized to your RAM)" \
+            sidekick-os-${{ matrix.arch }}.iso sidekick-os-${{ matrix.arch }}.iso.sha256

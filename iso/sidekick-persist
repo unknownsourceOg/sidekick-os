@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Turn the free space on the USB stick you booted from into permanent storage.
+# Everything - files, installed packages, the model, your settings - survives reboots.
+# Run once:  sudo sidekick-persist
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "run: sudo sidekick-persist"; exit 1; }
+green() { printf '\033[38;5;48m%s\033[0m\n' "$1"; }
+red() { printf '\033[38;5;203m%s\033[0m\n' "$1"; }
+
+# which device did we boot from?
+dev=$(findmnt -n -o SOURCE /run/live/medium 2>/dev/null || true)
+[ -n "$dev" ] || dev=$(findmnt -n -o SOURCE /lib/live/mount/medium 2>/dev/null || true)
+[ -n "$dev" ] || { red "cannot tell which USB you booted from - are you running the live system?"; exit 1; }
+disk="/dev/$(lsblk -no PKNAME "$dev")"
+green "booted from $dev on disk $disk"
+
+if blkid -L persistence >/dev/null 2>&1; then
+  green "persistence already exists. Nothing to do - reboot and it is used automatically."
+  exit 0
+fi
+
+free=$(parted -s "$disk" unit MiB print free | awk '/Free Space/{gsub("MiB","",$3); if ($3+0>1024) last=$0} END{print last}')
+[ -n "$free" ] || { red "no free space left on $disk. Use a bigger USB stick (32 GB+ recommended)."; exit 1; }
+start=$(echo "$free" | awk '{gsub("MiB","",$1); print $1}')
+end=$(echo "$free" | awk '{gsub("MiB","",$2); print $2}')
+size=$(( ${end%.*} - ${start%.*} ))
+green "found ${size} MiB of free space"
+
+cat <<EOF
+
+This will create a new partition on $disk using that free space,
+formatted ext4 and labelled 'persistence'. Existing partitions are untouched.
+EOF
+read -r -p "type YES to continue: " ok
+[ "$ok" = "YES" ] || { echo "cancelled"; exit 1; }
+
+parted -s "$disk" mkpart primary ext4 "${start}MiB" "${end}MiB"
+sleep 2
+partprobe "$disk" || true
+sleep 2
+part=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{p=$1} END{print p}')
+green "formatting $part"
+mkfs.ext4 -F -L persistence "$part"
+mnt=$(mktemp -d)
+mount "$part" "$mnt"
+echo "/ union" > "$mnt/persistence.conf"
+mkdir -p "$mnt/rw"
+umount "$mnt"; rmdir "$mnt"
+
+green "done. Reboot and everything you do sticks."
+echo "  the model, your files, new apps and settings all live on this stick now."
