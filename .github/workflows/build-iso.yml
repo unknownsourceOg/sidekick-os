@@ -1,7 +1,8 @@
 name: build sidekick os iso
 
-# Builds the bootable ISO on GitHub's free runners (x86_64 and arm64) and
-# publishes both to a Release you can download straight onto a USB stick.
+# Builds the bootable ISO on GitHub's free runners (x86_64 and arm64).
+# live-build has to run inside a real Debian container - Ubuntu's patched live-build
+# cannot bootstrap a Debian release.
 
 on:
   workflow_dispatch:
@@ -22,30 +23,41 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm   # Apple Silicon Mac inside UTM
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
       - name: free up disk
         run: |
-          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           df -h /
 
-      - name: install live-build
+      - name: build inside debian trixie
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y live-build debian-archive-keyring xorriso squashfs-tools
+          chmod +x iso/build-iso.sh iso/sidekick-persist iso/sidekick-firstrun ai/setup-ai.sh
+          docker run --rm --privileged \
+            -v "$PWD:/repo" -w /repo \
+            -e ARCH=${{ matrix.arch }} -e WORK=/tmp/skos \
+            debian:trixie bash -euxc '
+              apt-get update -qq
+              apt-get install -y --no-install-recommends \
+                live-build debian-archive-keyring ca-certificates curl file \
+                xorriso squashfs-tools dosfstools mtools xz-utils \
+                parted rsync procps
+              iso/build-iso.sh
+            '
 
-      - name: build
+      - name: report size
+        id: size
         run: |
-          chmod +x iso/build-iso.sh iso/sidekick-persist iso/sidekick-firstrun
-          sudo ARCH=${{ matrix.arch }} WORK=/mnt/skos-work iso/build-iso.sh
-
-      - name: check size (release assets cap at 2 GB)
-        run: |
-          sz=$(stat -c%s sidekick-os-${{ matrix.arch }}.iso)
-          echo "iso is $((sz/1024/1024)) MB"
-          [ "$sz" -lt 2100000000 ] || { echo "::error::ISO over 2 GB - trim the package list"; exit 1; }
+          f=sidekick-os-${{ matrix.arch }}.iso
+          sz=$(stat -c%s "$f")
+          echo "$f is $((sz/1024/1024)) MB"
+          if [ "$sz" -lt 2100000000 ]; then echo "release=true" >> $GITHUB_OUTPUT
+          else echo "release=false" >> $GITHUB_OUTPUT
+               echo "::warning::ISO over 2 GB - too big for a Release asset, download it from Artifacts"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -53,10 +65,11 @@ jobs:
           path: |
             sidekick-os-${{ matrix.arch }}.iso
             sidekick-os-${{ matrix.arch }}.iso.sha256
-          retention-days: 14
+          retention-days: 30
           compression-level: 0
 
       - name: publish release
+        if: steps.size.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

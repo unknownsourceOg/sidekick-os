@@ -13,10 +13,20 @@ command -v lb >/dev/null || { apt-get update -qq; apt-get install -y live-build 
 
 rm -rf "$WORK"; mkdir -p "$WORK"; cd "$WORK"
 
+M=http://deb.debian.org/debian/
+S=http://security.debian.org/debian-security/
+
 lb config \
+  --mode debian \
   --distribution "$DIST" \
   --architectures "$ARCH" \
   --archive-areas "main contrib non-free non-free-firmware" \
+  --mirror-bootstrap "$M" --parent-mirror-bootstrap "$M" \
+  --mirror-chroot "$M" --parent-mirror-chroot "$M" \
+  --mirror-binary "$M" --parent-mirror-binary "$M" \
+  --mirror-chroot-security "$S" --parent-mirror-chroot-security "$S" \
+  --mirror-binary-security "$S" --parent-mirror-binary-security "$S" \
+  --compression xz \
   --binary-images iso-hybrid \
   --iso-application "Sidekick OS" \
   --iso-publisher "Sidekick" \
@@ -54,8 +64,8 @@ tmux
 htop
 xclip
 nano
-micro
-build-essential
+gcc
+make
 python3-pip
 python3-venv
 samba
@@ -74,10 +84,7 @@ EOF
 [ "$ARCH" = "amd64" ] && cat >> config/package-lists/sidekick.list.chroot <<'EOF'
 firmware-iwlwifi
 firmware-realtek
-firmware-atheros
 firmware-brcm80211
-firmware-misc-nonfree
-broadcom-sta-dkms
 EOF
 
 # ---------- files baked into the system ----------
