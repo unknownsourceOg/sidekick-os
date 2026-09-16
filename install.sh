@@ -11,7 +11,7 @@ apt-get install -y --no-install-recommends \
   python3 python3-gi python3-gi-cairo python3-cairo gir1.2-gtk-3.0 \
   xorg xserver-xorg-input-libinput xfce4 xfce4-terminal lightdm lightdm-gtk-greeter \
   dbus-user-session dbus-x11 pkexec mate-polkit geany fonts-jetbrains-mono \
-  thunar mousepad pavucontrol network-manager-gnome git cmake build-essential libssl-dev
+  thunar mousepad pavucontrol network-manager-gnome wpasupplicant git cmake build-essential libssl-dev
 install -d /opt/sidekick /opt/sidekick/templates /usr/local/libexec /usr/share/polkit-1/actions /etc/xdg/autostart
 install -m 644 "$HERE"/mascot/*.py "$HERE"/mascot/models.json /opt/sidekick/
 install -m 644 "$HERE"/mascot/templates/*.py /opt/sidekick/templates/

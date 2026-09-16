@@ -71,6 +71,7 @@ xfce4-notifyd
 lightdm
 light-locker
 network-manager-gnome
+wpasupplicant
 firefox-esr
 thunar
 mousepad
@@ -238,7 +239,7 @@ set -e
 # pass before live-build packs the root filesystem into the ISO.
 for package in xserver-xorg-core xserver-xorg-input-libinput lightdm \
                lightdm-gtk-greeter xfce4-session user-setup sudo locales \
-               dbus-user-session dbus-x11 pkexec mate-polkit
+               dbus-user-session dbus-x11 pkexec mate-polkit wpasupplicant
 do
     status=$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)
     if [ "$status" != "install ok installed" ]; then
@@ -247,7 +248,7 @@ do
     fi
 done
 for executable in /usr/lib/xorg/Xorg /usr/lib/user-setup/user-setup-apply \
-                  /usr/bin/sudo /usr/bin/startxfce4
+                  /usr/bin/sudo /usr/bin/startxfce4 /usr/sbin/wpa_supplicant
 do
     if [ ! -x "$executable" ]; then
         echo "SIDEKICK BUILD ERROR: required executable missing: $executable" >&2
