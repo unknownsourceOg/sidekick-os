@@ -1,0 +1,15 @@
+[Unit]
+Description=Verify Sidekick desktop inside the CI virtual machine
+ConditionKernelCommandLine=sidekick.selftest=1
+After=display-manager.service
+Wants=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/sidekick-boot-check
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=420
+
+[Install]
+WantedBy=graphical.target

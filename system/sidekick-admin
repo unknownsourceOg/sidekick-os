@@ -1,0 +1,27 @@
+#!/usr/bin/python3 -I
+"""Only fixed software-install actions. pkexec supplies the desktop authorization."""
+import os
+import subprocess
+import sys
+
+GROUPS = {'code': ['geany'], 'music': ['audacity', 'lmms'],
+          'animation': ['blender', 'kdenlive']}
+
+def main(argv):
+    if len(argv) != 1 or argv[0] not in GROUPS:
+        print('Unsupported action. Choose a software group in Sidekick.', file=sys.stderr)
+        return 2
+    if os.geteuid() != 0:
+        print('Use the Sidekick desktop authorization dialog.', file=sys.stderr)
+        return 1
+    env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8',
+           'DEBIAN_FRONTEND': 'noninteractive'}
+    for command in [['/usr/bin/apt-get', 'update'],
+                    ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *GROUPS[argv[0]]]]:
+        result = subprocess.run(command, env=env, check=False)
+        if result.returncode:
+            return result.returncode
+    return 0
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

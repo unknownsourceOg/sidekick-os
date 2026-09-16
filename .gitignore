@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.iso
+*.iso.sha256
+*.build.log
+*.packages
+sidekick-os-*.gui.png
+sidekick-os-*.boot.log

@@ -8,20 +8,46 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    branches: ['sidekick/desktop-companion']
 
 permissions:
   contents: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: install desktop test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-gi python3-gi-cairo \
+            python3-cairo gir1.2-gtk-3.0 python3-mido xvfb xauth dbus-x11 fonts-jetbrains-mono
+      - name: test file protection, MIDI, downloads and controls
+        run: |
+          /usr/bin/python3 -m unittest discover -s tests -v
+          bash -n iso/build-iso.sh ai/build-engine.sh install.sh
+          /usr/bin/python3 -m compileall -q mascot scripts
+      - name: exercise and render the native desktop
+        env:
+          SIDEKICK_TEST_HOME: ${{ runner.temp }}/sidekick-gui-test
+        run: |
+          xvfb-run -a dbus-run-session -- /usr/bin/python3 mascot/sidekick_chat.py \
+            --smoke-test --screenshot /tmp/sidekick-preview.png
+      - name: save desktop preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidekick-desktop-preview
+          path: /tmp/sidekick-preview.png
+          if-no-files-found: ignore
+
   iso:
+    needs: verify
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04       # Intel Mac, any PC
-          - arch: arm64
-            runner: ubuntu-24.04-arm   # Apple Silicon Mac inside UTM
+        include: ${{ fromJSON(github.ref == 'refs/heads/sidekick/desktop-companion' && '[{"arch":"amd64","runner":"ubuntu-24.04"}]' || '[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -48,6 +74,13 @@ jobs:
               iso/build-iso.sh
             '
 
+      - name: boot the live desktop in a disposable VM
+        if: matrix.arch == 'amd64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 xorriso
+          python3 scripts/boot-smoke.py sidekick-os-amd64.iso --log sidekick-os-amd64.boot.log
+
       - name: report size
         id: size
         run: |
@@ -67,9 +100,24 @@ jobs:
             sidekick-os-${{ matrix.arch }}.iso.sha256
           retention-days: 30
           compression-level: 0
+          if-no-files-found: error
+
+      - name: save build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidekick-os-${{ matrix.arch }}-diagnostics
+          path: |
+            sidekick-os-${{ matrix.arch }}.build.log
+            sidekick-os-${{ matrix.arch }}.packages
+            sidekick-os-${{ matrix.arch }}.gui.png
+            sidekick-os-${{ matrix.arch }}.boot.log
+          retention-days: 30
+          compression-level: 6
+          if-no-files-found: ignore
 
       - name: publish release
-        if: steps.size.outputs.release == 'true'
+        if: steps.size.outputs.release == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -82,7 +130,8 @@ jobs:
           **arm64** = Apple Silicon Mac, run it in UTM (free).
 
           Flash with balenaEtcher, boot it, then:
-          - \`sudo sidekick-persist\` keeps everything on the stick forever
-          - the Install icon puts it on a real disk
-          - first run offers the free local coding model (Qwen2.5-Coder, sized to your RAM)" \
+          - Sidekick opens a graphical welcome and setup screen
+          - choose a model and a persistent storage folder in AI Setup
+          - Computer, Code, Music and Animation pages provide guided controls
+          - the amd64 live desktop passed the VM boot check" \
             sidekick-os-${{ matrix.arch }}.iso sidekick-os-${{ matrix.arch }}.iso.sha256
