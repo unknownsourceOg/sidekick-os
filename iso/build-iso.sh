@@ -40,14 +40,38 @@ lb config \
   --bootappend-live "boot=live components quiet splash persistence persistence-encryption=none noeject username=hacker user-fullname=Sidekick hostname=sidekick"
 
 # ---------- what goes in ----------
+# Recommends are disabled above. XFCE/LightDM only recommend the X server,
+# and live-config only recommends user-setup, sudo and locales. Keep these
+# explicit or the ISO builds successfully without a desktop or live account.
 mkdir -p config/package-lists
 cat > config/package-lists/sidekick.list.chroot <<'EOF'
+xorg
+xserver-xorg-video-all
+xserver-xorg-input-libinput
+dbus-user-session
+dbus-x11
+user-setup
+sudo
+locales
+keyboard-configuration
+live-tools
+pkexec
+mate-polkit
+geany
+cmake
+build-essential
+libssl-dev
+xvfb
+python3-mido
+adwaita-icon-theme
+debian-installer-launcher
 xfce4
 xfce4-terminal
 xfce4-notifyd
 lightdm
 light-locker
 network-manager-gnome
+wpasupplicant
 firefox-esr
 thunar
 mousepad
@@ -96,13 +120,21 @@ mkdir -p "$INC"/opt/sidekick "$INC"/usr/local/bin "$INC"/etc/xdg/autostart \
 cp "$REPO"/mascot/*.py "$INC"/opt/sidekick/
 cp "$REPO"/theme/wallpaper.png "$INC"/opt/sidekick/
 cp "$REPO"/ai/setup-ai.sh "$INC"/opt/sidekick/
-cp "$REPO"/iso/sidekick-persist "$INC"/usr/local/bin/
+cp "$REPO"/ai/build-engine.sh "$INC"/opt/sidekick/
+cp "$REPO"/mascot/models.json "$INC"/opt/sidekick/
+cp -r "$REPO"/mascot/templates "$INC"/opt/sidekick/
+mkdir -p "$INC"/usr/local/libexec "$INC"/usr/share/polkit-1/actions "$INC"/etc/systemd/system
+install -m 755 "$REPO"/system/sidekick-admin "$INC"/usr/local/libexec/sidekick-admin
+install -m 755 "$REPO"/system/sidekick-boot-check "$INC"/usr/local/libexec/sidekick-boot-check
+cp "$REPO"/system/org.sidekick.install-tools.policy "$INC"/usr/share/polkit-1/actions/
+cp "$REPO"/system/sidekick-boot-check.service "$INC"/etc/systemd/system/
+cp "$REPO"/system/polkit-mate-authentication-agent-1.desktop "$INC"/etc/xdg/autostart/
 cp "$REPO"/iso/sidekick-firstrun "$INC"/usr/local/bin/
 chmod +x "$INC"/usr/local/bin/* "$INC"/opt/sidekick/setup-ai.sh
 
 cat > "$INC"/opt/sidekick/sidekick-mascot <<'EOF'
 #!/usr/bin/env bash
-cd /opt/sidekick && exec python3 sidekick_chat.py
+cd /opt/sidekick && exec python3 sidekick_chat.py "$@"
 EOF
 chmod +x "$INC"/opt/sidekick/sidekick-mascot
 ln -sf /opt/sidekick/sidekick-mascot "$INC"/usr/local/bin/sidekick-mascot
@@ -112,18 +144,30 @@ cat > "$INC"/etc/xdg/autostart/sidekick.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Sidekick companion
-Exec=/opt/sidekick/sidekick-mascot
+Exec=/opt/sidekick/sidekick-mascot --background
 Icon=utilities-terminal
 X-GNOME-Autostart-enabled=true
 EOF
-# first run: offer the model download, set up sharing
-cat > "$INC"/etc/xdg/autostart/sidekick-firstrun.desktop <<'EOF'
+# The first welcome and model setup now use native desktop controls.
+cat > "$INC"/usr/share/applications/sidekick.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Sidekick first run
-Exec=xfce4-terminal --title="Sidekick setup" -e /usr/local/bin/sidekick-firstrun
-X-GNOME-Autostart-enabled=true
+Name=Sidekick
+Comment=Computer, coding, music and animation companion
+Exec=/opt/sidekick/sidekick-mascot
+Icon=face-smile
+Categories=Utility;Development;AudioVideo;
+Terminal=false
 EOF
+cat > "$INC"/usr/local/bin/sidekick-ai <<'EOF'
+#!/bin/sh
+case "${1:-status}" in
+  start|stop|restart|status) exec systemctl --user "${1:-status}" sidekick-ai.service ;;
+  log) exec journalctl --user -u sidekick-ai --no-pager -n 80 ;;
+  *) echo 'Open AI Setup in Sidekick to manage the model.' >&2; exit 2 ;;
+esac
+EOF
+chmod +x "$INC"/usr/local/bin/sidekick-ai
 
 # terminal brain: sk "question"
 cat > "$INC"/usr/local/bin/sk <<'EOF'
@@ -139,21 +183,6 @@ curl -s -m 600 -H 'Content-Type: application/json' -d "$payload" "$API" \
  | sed $'s/^/\033[38;5;48m/;s/$/\033[0m/'
 EOF
 chmod +x "$INC"/usr/local/bin/sk
-
-cat > "$INC"/etc/profile.d/sidekick-banner.sh <<'EOF'
-[ -n "$PS1" ] || return 0
-printf '\033[38;5;48m'
-cat <<'ART'
-  ___ _____ ___  ___ _  _____ ___ _  _
- / __|_   _|   \| __| |/ / __| __| |/ /
- \__ \ | | | |) | _|| ' <| _|| _|| ' <
- |___/ |_| |___/|___|_|\_\___|___|_|\_\  os
-ART
-printf '\033[0m  model: '
-curl -s -m 1 http://127.0.0.1:8080/health >/dev/null 2>&1 \
-  && printf '\033[38;5;48monline\033[0m' || printf '\033[38;5;214mstopped -> sidekick-ai start\033[0m'
-printf '   ask: \033[38;5;51msk "how do I ..."\033[0m   persistence: \033[38;5;51msudo sidekick-persist\033[0m\n\n'
-EOF
 
 # xfce look: dark, our wallpaper, jetbrains mono terminal
 cat > "$INC"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<'EOF'
@@ -206,6 +235,37 @@ mkdir -p config/hooks/normal
 cat > config/hooks/normal/0100-sidekick.hook.chroot <<'EOF'
 #!/bin/sh
 set -e
+# Check the installed system, not just the requested package list. This must
+# pass before live-build packs the root filesystem into the ISO.
+for package in xserver-xorg-core xserver-xorg-input-libinput lightdm \
+               lightdm-gtk-greeter xfce4-session user-setup sudo locales \
+               dbus-user-session dbus-x11 pkexec mate-polkit wpasupplicant
+do
+    status=$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)
+    if [ "$status" != "install ok installed" ]; then
+        echo "SIDEKICK BUILD ERROR: required package missing: $package" >&2
+        exit 1
+    fi
+done
+for executable in /usr/lib/xorg/Xorg /usr/lib/user-setup/user-setup-apply \
+                  /usr/bin/sudo /usr/bin/startxfce4 /usr/sbin/wpa_supplicant
+do
+    if [ ! -x "$executable" ]; then
+        echo "SIDEKICK BUILD ERROR: required executable missing: $executable" >&2
+        exit 1
+    fi
+done
+if [ ! -r /usr/share/xsessions/xfce.desktop ]; then
+    echo "SIDEKICK BUILD ERROR: XFCE login session is missing" >&2
+    exit 1
+fi
+echo "Sidekick desktop and live-user prerequisites verified."
+# Include the engine, so first run only downloads a verified model.
+bash /opt/sidekick/build-engine.sh
+SIDEKICK_TEST_HOME=/tmp/sidekick-gui-test xvfb-run -a python3 /opt/sidekick/sidekick_chat.py \
+    --smoke-test --screenshot /opt/sidekick/gui-build-check.png
+rm -rf /tmp/sidekick-gui-test
+systemctl enable sidekick-boot-check.service
 systemctl enable ssh 2>/dev/null || true
 systemctl enable smbd 2>/dev/null || true
 systemctl set-default graphical.target
@@ -228,7 +288,10 @@ EOF
 chmod +x config/hooks/normal/0100-sidekick.hook.chroot
 
 # ---------- build ----------
-lb build 2>&1 | tail -40
+lb build 2>&1 | tee "$REPO/sidekick-os-$ARCH.build.log"
+# Keep the final package inventory next to the ISO for diagnosis.
+cp binary/live/filesystem.packages "$REPO/sidekick-os-$ARCH.packages"
+cp chroot/opt/sidekick/gui-build-check.png "$REPO/sidekick-os-$ARCH.gui.png"
 iso=$(ls -1 live-image-*.hybrid.iso live-image-*.iso 2>/dev/null | head -1)
 [ -n "$iso" ] || { echo "BUILD FAILED: no iso produced"; exit 1; }
 out="$REPO/sidekick-os-$ARCH.iso"

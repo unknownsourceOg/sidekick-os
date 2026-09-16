@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop authorization
+Exec=/usr/libexec/polkit-mate-authentication-agent-1
+NoDisplay=true
+OnlyShowIn=XFCE;

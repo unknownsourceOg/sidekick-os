@@ -1,0 +1,23 @@
+#!/bin/sh
+# Used only in the disposable CI VM when explicitly enabled on its command line.
+set -eu
+for n in $(seq 1 180); do
+    if id hacker >/dev/null 2>&1 && pgrep -u hacker xfce4-session >/dev/null && \
+       pgrep -u hacker xfwm4 >/dev/null && \
+       test -s /home/hacker/.local/state/sidekick/ui-ready; then
+        pid=$(cat /home/hacker/.local/state/sidekick/ui-ready)
+        if test -r "/proc/$pid/cmdline" && grep -azq sidekick_chat.py "/proc/$pid/cmdline"; then
+            sleep 5
+            if kill -0 "$pid" 2>/dev/null && pgrep -u hacker xfce4-session >/dev/null; then
+                echo SIDEKICK_BOOT_OK
+                systemctl poweroff
+                exit 0
+            fi
+        fi
+    fi
+    sleep 2
+done
+echo SIDEKICK_BOOT_FAILED
+journalctl -b --no-pager -u lightdm -u live-config --lines=100 || true
+systemctl poweroff
+exit 1
